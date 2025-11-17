@@ -1,0 +1,98 @@
+#!/bin/bash
+# shark - Wireshark launcher (host or netns) for GNOME + zenity
+# Usage:
+#   shark            -> wybór z listy (host + netns-y)
+#   shark host       -> Wireshark jako root w głównym namespace
+#   shark h1         -> Wireshark w netns h1
+#   shark h2 / shark r / ... analogicznie
+
+# Nie uruchamiać jako root
+if [ "$EUID" -eq 0 ]; then
+    echo "Please run this as a normal user, not as root."
+    exit 1
+fi
+
+# zenity musi być dostępne
+if ! command -v zenity >/dev/null 2>&1; then
+    echo "zenity is not installed or not in PATH."
+    exit 1
+fi
+
+ARG="$1"
+NS=""          # wybrany namespace (pusty dla hosta)
+HOST_MODE=0    # 1 = uruchom w host (bez ip netns exec)
+
+# --- interpretacja argumentu z linii poleceń -------------------------------
+
+if [ -n "$ARG" ]; then
+    case "$ARG" in
+        host|HOST|global|root)
+            HOST_MODE=1
+            ;;
+        *)
+            NS="$ARG"
+            ;;
+    esac
+fi
+
+# --- jeśli nie podano nic -> zenity z wyborem ------------------------------
+
+if [ -z "$ARG" ]; then
+    # Zbierz listę netns (może być pusta)
+    NAMESPACES=$(ip netns list | awk '{print $1}')
+
+    # Zbuduj listę dla zenity: najpierw "host", potem netns-y
+    # host pokażemy jako "HOST (no namespace)"
+    if [ -n "$NAMESPACES" ]; then
+        CHOICE=$(printf '%s\n' "HOST (no namespace)" $NAMESPACES | \
+                 zenity --list \
+                        --title="Choose capture context" \
+                        --column="Target")
+    else
+        # brak netns -> tylko host
+        CHOICE=$(printf '%s\n' "HOST (no namespace)" | \
+                 zenity --list \
+                        --title="Choose capture context" \
+                        --column="Target")
+    fi
+
+    # ESC/anulowanie
+    if [ -z "$CHOICE" ]; then
+        exit 0
+    fi
+
+    if [ "$CHOICE" = "HOST (no namespace)" ]; then
+        HOST_MODE=1
+        NS=""
+    else
+        NS="$CHOICE"
+    fi
+fi
+
+# --- jeśli wybrano netns -> sanity check -----------------------------------
+
+if [ "$HOST_MODE" -eq 0 ]; then
+    if ! ip netns list | awk '{print $1}' | grep -qx "$NS"; then
+        zenity --error --text="Network namespace '$NS' not found."
+        exit 1
+    fi
+fi
+
+# --- uruchomienie Wiresharka -----------------------------------------------
+
+if [ "$HOST_MODE" -eq 1 ]; then
+    # Wireshark jako root w host namespace
+    pkexec env \
+        DISPLAY="$DISPLAY" \
+        XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" \
+        WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
+        wireshark
+else
+    # Wireshark jako root w wybranym namespace
+    pkexec env \
+        DISPLAY="$DISPLAY" \
+        XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" \
+        WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
+        ip netns exec "$NS" wireshark
+fi
+

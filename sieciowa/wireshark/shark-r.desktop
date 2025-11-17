@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Wireshark in namespace
+Comment=Wireshark in network namespace
+Exec=/usr/local/bin/shark
+Icon=wireshark
+Terminal=false
+Categories=Network;
+StartupNotify=true
+
